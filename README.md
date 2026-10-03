@@ -1,68 +1,173 @@
 # AI-Native ERP Proof of Concept: AP Invoice-to-Ledger Pipeline
 
-This project is a Proof of Concept (POC) demonstrating a modern, AI-integrated Enterprise Resource Planning (ERP) system. It focuses specifically on the **Accounts Payable (AP) Invoice-to-Ledger** pipeline, transforming incoming raw invoices into validated accounting ledger entries using a hybrid of deterministic rules and Large Language Model (LLM) reasoning.
+A proof of concept for an **Accounts Payable invoice-line-to-ledger** workflow. Incoming invoice lines are classified to a GL account and department by a three-tier router (exact pattern, semantic pattern, LLM), validated by deterministic Java code, and persisted as journal entries. Low-confidence or fallback proposals wait for a human to approve or reject them, and approved decisions feed back into the pattern store.
+
+> **Status: working POC, not production-ready.** It is not exactly-once, not secured, not reconciled against source systems, and its confidence/similarity thresholds are uncalibrated. See [Known limitations](#-known-limitations) and `SPEC.txt` / `DESIGN.md` for detail.
 
 ## 🚀 Overview
-The goal of this POC is to automate the manual effort typically required when invoices fail deterministic ERP rules. By leveraging AI to categorize complex or novel transactions and keeping a human-in-the-loop for approvals, we significantly reduce the workload for accountants while maintaining 100% financial accuracy.
 
-In an ideal AI-native ERP:
-- **Event-Driven:** Webhooks transmit real-time transaction events.
-- **Decoupled:** Kafka separates ingestion from processing, allowing for scale and varied processing speeds (real-time vs. batch).
-- **Intelligent Routing:** Transactions are categorized for straight-through processing via rules or AI-assisted inference for exceptions.
+The goal is to test one narrow hypothesis: an LLM, assisted by retrieval over previously approved decisions, can absorb the exception-handling work of invoice coding, while deterministic application code keeps authority over what is written to the ledger.
+
+**AI proposes; deterministic code validates; the ledger remains authoritative.**
+
+- **Event-driven:** a webhook receives invoice-line events and hands them to Kafka.
+- **Decoupled:** Kafka separates ingestion from classification and posting.
+- **Tiered routing:** cheapest and most predictable path first, LLM only for what is left.
+- **Human in the loop:** low-confidence and fallback proposals go to `PENDING_APPROVAL`; approval promotes the decision into the pattern store.
 
 ## 🏗️ Architecture
-The system is built with **Spring Boot 3** and follows a standard enterprise layered architecture enhanced with event-driven and AI capabilities.
 
-- **`controller/`**: REST API endpoints for webhooks or UI data ingestion.
-- **`service/`**: Core business logic, including the decision router and LLM integration.
-- **`domain/`**: The authoritative domain model (Invoices, Ledger Entries, Accounts).
-- **`repository/`**: Persistence layer using PostgreSQL.
-- **`dto/`**: Data Transfer Objects for cross-layer and network communication.
-- **Infrastructure**: Managed via `docker-compose.yml`, featuring **PostgreSQL** (with **pgvector** for semantic search) and **Apache Kafka**.
+Built with **Java 21** and **Spring Boot 3.3.4** (Spring AI 1.0.9), with a conventional layered layout plus event-driven and AI components.
 
-## ⚖️ Core Logic & "Golden Rules"
+- **`controller/`**: `WebhookIngestionController` (webhook entry point) and `JournalEntryApprovalController` (reviewer API).
+- **`consumer/`**: `InvoiceTransactionConsumer`, the Kafka listener.
+- **`service/`**: `DecisionRouterService` (tier routing), `SemanticPatternMatchingService` (pgvector retrieval), `LlmInferenceService` (Gemini), `AccountingEngine` (validation and posting), `JournalEntryApprovalService` (approve/reject and pattern promotion).
+- **`domain/core/`**: authoritative ledger entities (`JournalEntry`, `LedgerLine`; `Invoice` exists but is not used yet).
+- **`domain/ai/`**: `AccountingPattern`, `AiDecisionLog`.
+- **`domain/integration/`**: `WebhookEvent`.
+- **`repository/`**: Spring Data JPA repositories.
+- **`dto/`**: webhook envelope, proposal, and summary records.
+- **`config/`**: Kafka retry/dead-letter configuration and `DemoDataSeeder`.
+- **Infrastructure** (`docker-compose.yml`): PostgreSQL with **pgvector** and a single-node **Apache Kafka** (KRaft). The main topic and a `.DLT` dead-letter topic are created at startup.
 
-### 1. AI as an Assistant, Human-in-the-Loop
-The AI suggests classifications but cannot write directly to the ledger. Every entry must pass the **Java Accounting Engine**, which enforces strict financial rules (e.g., Credits = Debits). If a transaction fails or confidence is low, it is routed for human approval.
+PostgreSQL schemas: `core_finance` (ledger), `ai_intelligence` (patterns, decision logs), `integration` (webhook events). They are created by Hibernate (`ddl-auto: update`); there is no migration tool yet. Spring AI's pgvector store also creates its own vector table.
 
-### 2. Strategic Cost Management (Selective Invocation)
-To minimize LLM API costs:
-- **Rule-First:** If an invoice matches a known vendor pattern, the system uses a deterministic Rule Engine.
-- **Feedback Loop:** Once AI successfully categorizes a new pattern, it can be codified into an "Accounting Distribution Template" for future straight-through processing.
+## ⚖️ Core Logic and Golden Rules
 
-### 3. Dual Ingestion Strategy
-- **Real-time:** Webhooks trigger immediate processing as events occur.
-- **Safety Net:** Nightly batch processes reconcile source systems to ensure no transactions were missed.
+The authoritative list of invariants, with current conformance notes, is in `SPEC.txt` (GR-1 to GR-9). In short:
+
+### 1. AI is advisory
+Neither the LLM nor a pattern/semantic match writes to the ledger. Every proposal goes through `AccountingEngine`, which checks the debit-side GL account/department allowlist and debit/credit equality before anything is saved.
+
+### 2. Tiered routing
+`DecisionRouterService` resolves each line in order:
+
+| Tier | Method | Source value | Confidence | Review? |
+|---|---|---|---|---|
+| 1 | Exact vendor + description match | `HISTORICAL_PATTERN` | 1.00 | No |
+| 2 | pgvector cosine similarity, top-1, threshold 0.85 | `SEMANTIC_MATCH` | similarity score | **No (see limitations)** |
+| 3 | LLM (`gemini-3-flash-preview`) with allowlist check | model name | model-reported | Yes if below 0.90 |
+| Fallback | LLM error or invalid output | `<model>_FALLBACK` | 0.00 | Always (suspense `999999`/`SUSPENSE`) |
+
+The 0.90 and 0.85 thresholds are hand-picked starting values, not calibrated on data.
+
+### 3. Feedback loop
+Approving a `PENDING_APPROVAL` entry sets it to `POSTED`, saves a new accounting pattern from its debit line, and indexes it for semantic search, so similar future invoices resolve at Tier 1 or Tier 2.
+
+### 4. Reliability mechanisms
+- Webhook events are persisted with a unique `(source, eventId)` key; duplicates are ignored.
+- The consumer lets exceptions reach Spring Kafka's error handler: three retries, 2-second fixed backoff, then `invoice-ingestion-topic.DLT`.
+- Journal posting skips a second `POSTED` entry for the same source invoice ID.
+
+These reduce duplicates but do **not** make processing exactly-once (see limitations).
 
 ## 🛠️ Technologies
-- **Java 17 / Spring Boot 3**: Backend framework.
-- **Apache Kafka**: High-volume event streaming and decoupling.
-- **PostgreSQL + pgvector**: Relational storage with vector capabilities for AI memory/similarity search.
-- **Spring Data JPA**: For persistence management.
+- **Java 21 / Spring Boot 3.3.4**
+- **Spring AI 1.0.9** (OpenAI-compatible client pointed at Gemini; pgvector vector store)
+- **Apache Kafka** (event streaming and decoupling)
+- **PostgreSQL 16 + pgvector** (relational storage and embeddings, HNSW index, cosine distance)
+- **Spring Data JPA**
 
 ## 🔄 System Flow
 
-### 1. Webhook Ingestion (HTTP POST)
-- **`WebhookIngestionController.ingestInvoiceWebhook`**: REST entry point; enforces idempotency and hands off to Kafka.
-- **`WebhookEventRepository.existsBySourceAndEventId`**: Prevents duplicate processing of the same event.
-- **`WebhookEventRepository.saveRawEvent`**: Persists the original JSON for auditability.
-- **`KafkaTemplate.send`**: Dispatches the event to the `invoice-ingestion-topic`.
+### 1. Webhook ingestion (`POST /api/v1/webhooks/invoices`)
+- `WebhookIngestionController.ingestInvoiceWebhook` validates required envelope fields and checks `WebhookEventRepository.findBySourceAndEventId`.
+- A new event is saved as a `WebhookEvent` (serialized payload plus metadata) with `saveAndFlush`.
+- The envelope is sent to `invoice-ingestion-topic` and the controller waits up to 5 seconds for acknowledgement. Success marks the event `PUBLISHED` and returns `202`; failure marks it `FAILED` and returns `500`, and a retry of the same event republishes it.
 
-### 2. Accounting Decision & Ledger Flow
-- **`DecisionRouterService.resolveAccountingDistribution`**: Prioritizes historical patterns before falling back to LLM inference.
-- **`AccountingPatternRepository.findTopByVendorAndDescriptionFeature`**: Targeted lookup for learned mappings.
-- **`LlmInferenceService.inferGlDistribution`**: Uses semantic reasoning to predict GL accounts and departments.
-- **`AccountingEngine.postJournalEntry`**: Validates the double-entry balance and builds ledger entities.
-- **`JournalEntryRepository.save`**: Persists the validated entry to the authoritative ledger.
+### 2. Classification and posting
+- `InvoiceTransactionConsumer` validates `vendorName`, `lineDescription`, and a positive `amount`.
+- `DecisionRouterService.resolveAccountingDistribution` runs the tiers above.
+- `AccountingEngine.postJournalEntry` validates and persists the journal as `POSTED` or `PENDING_APPROVAL`.
+- `LlmInferenceService` records LLM success and fallback in `ai_decision_logs`.
+
+### 3. Review
+- `JournalEntryApprovalService` approves or rejects pending entries and promotes approved ones to patterns.
+
+## 🌐 API
+
+### Webhook
+`POST /api/v1/webhooks/invoices`
+
+```json
+{
+  "eventId": "evt-001",
+  "eventType": "INVOICE_LINE_CREATED",
+  "source": "demo-ap-system",
+  "sourceAccountId": "demo-account-1",
+  "sourceObjectId": "INV-001",
+  "sourceObjectVersion": 1,
+  "occurredAt": "2026-10-02T12:00:00Z",
+  "payload": {
+    "vendorName": "AWS",
+    "lineDescription": "Cloud hosting services",
+    "amount": 250.00
+  }
+}
+```
+
+Responses: `202 RECEIVED`, `200 IGNORED_DUPLICATE`, `400 INVALID_PAYLOAD` (serialization failure), `500 PERSISTED_BUT_KAFKA_FAILED`. A missing required field currently returns `500` rather than `400`.
+
+### Reviewer API (`/api/v1/journal-entries`) — no authentication yet
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/pending` | List entries awaiting approval |
+| GET | `/by-invoice/{invoiceId}` | List entries for a source invoice ID |
+| POST | `/{entryId}/approve` | `PENDING_APPROVAL` → `POSTED`, promote to pattern |
+| POST | `/{entryId}/reject` | `PENDING_APPROVAL` → `REJECTED` |
+
+A non-pending entry returns `409`. An unknown entry currently returns `500` instead of `404`.
 
 ## 🚦 Getting Started
 
-### 1. Launch Infrastructure
+### Prerequisites
+Java 21, Docker, and a Gemini API key. Tests and the application both need `GEMINI_API_KEY` set, and the key must never be committed.
+
+### 1. Launch infrastructure
 ```bash
-docker-compose up -d # Spins up PostgreSQL (pgvector) + Apache Kafka
+# Start Docker Desktop first
+docker-compose up -d   # PostgreSQL (pgvector) + Kafka, topics created automatically
+```
+Postgres has no persistent volume, so data is lost when the container is removed.
+
+### 2. Run the application
+```bash
+export GEMINI_API_KEY="your-key-here"   # PowerShell: $env:GEMINI_API_KEY="your-key-here"
+./mvnw spring-boot:run
+```
+On startup `DemoDataSeeder` creates two demo patterns (AWS / "Cloud hosting services", Staples / "Office supplies") and indexes them, but only when the pattern table is empty. Indexing calls the embedding API.
+
+### 3. Run tests
+```bash
+./mvnw clean test
+```
+The repository currently defines 8 tests. The two `@SpringBootTest` classes need PostgreSQL running and `GEMINI_API_KEY` set, and they share your local development database. Re-run the suite to confirm the current pass count; the tests cover unit and context behavior only, not the end-to-end pipeline.
+
+### 4. Try the demo
+```bash
+./demo.sh   # requires curl and jq, stack up, app running on :8080
+```
+It walks through (1) an exact pattern match, (2) a new vendor that goes to the LLM and may land in `PENDING_APPROVAL`, followed by an approve command, and (3) instructions for simulating an LLM outage. The LLM path depends on live model output and is not deterministic. There is no scripted semantic-tier or rejection demo yet.
+
+### 5. Query the database
+```bash
+docker compose exec postgres psql -U erp_user -d aierp_db
+# e.g.: select * from ai_intelligence.accounting_patterns;
+#       select entry_id, source_invoice_id, status, source from core_finance.journal_entries;
 ```
 
-### 2. Run the Application
-```bash
-./mvnw spring-boot:run # Runs the application server
-```
+## ⚠️ Known limitations
+
+Highest-impact items first. The full prioritized list is in `DESIGN.md` section 5.
+
+- **Approval API is unauthenticated** and records no reviewer identity; reviewers can only accept or reject, not correct an account.
+- **Approving a suspense/fallback entry promotes it into a pattern**, after which that vendor/description auto-posts to suspense without review.
+- **Semantic matches (0.85+) post without human review**, and semantic search has no vendor pre-filter.
+- **Not exactly-once:** the database write and Kafka publish are separate, journal idempotency is checked at application level only (and only for `POSTED` entries), and there is no transactional outbox.
+- **Webhook has no authentication or signature validation.**
+- **Webhook status stops at `PUBLISHED`:** the consumer does not record processed, retrying, or dead-letter outcomes, and there is no DLT replay tooling.
+- **No reconciliation or backfill.** Missed source events are not detected. (A nightly reconciliation job is a design goal, not an implemented feature.)
+- **Embedding/vector failures are not handled in routing;** they go through Kafka retry and the DLT instead of a fallback.
+- **Single-line payload shape, hardcoded chart of accounts** (duplicated in two classes, debit side only), no currency, period, tax, or multi-line invoice handling.
+- **Limited test coverage:** nothing covers the webhook controller, consumer, semantic service, approval flow, concurrency, or failure injection.
+- Invoice text is sent to an external LLM and embedding provider; do not use real financial data without reviewing that.

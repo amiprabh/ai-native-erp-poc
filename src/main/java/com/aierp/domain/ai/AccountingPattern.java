@@ -33,4 +33,23 @@ public class AccountingPattern {
     public String getGlAccountId() { return glAccountId; }
     public String getDepartmentId() { return departmentId; }
     public Instant getCreatedAt() { return createdAt; }
+
+    public void setDescriptionFeature(String descriptionFeature) {
+        this.descriptionFeature = descriptionFeature;
+    }
+
+	public void setVendorName(String vendorName) {
+        this.vendorName = vendorName;
+    }
+
+    public void setGlAccountId(String glAccountId) {
+        this.glAccountId = glAccountId;        
+    }
+
+    public void setDepartmentId(String departmentId) {
+        this.departmentId = departmentId;
+    }
+
+
+
 }

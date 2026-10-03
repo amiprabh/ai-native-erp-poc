@@ -1,4 +1,4 @@
-package com.aierp.ai_native_erp_poc;
+package com.aierp;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

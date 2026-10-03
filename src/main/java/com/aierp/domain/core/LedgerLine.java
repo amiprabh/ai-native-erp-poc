@@ -17,6 +17,7 @@ public class LedgerLine {
     private JournalEntry journalEntry;
 
     private String glAccountId;
+    private String departmentId;
     private BigDecimal amount;
     private String side; // "DEBIT" or "CREDIT"
 
@@ -28,6 +29,8 @@ public class LedgerLine {
     public void setJournalEntry(JournalEntry journalEntry) { this.journalEntry = journalEntry; }
     public String getGlAccountId() { return glAccountId; }
     public void setGlAccountId(String glAccountId) { this.glAccountId = glAccountId; }
+    public String getDepartmentId() { return departmentId; }
+    public void setDepartmentId(String departmentId) { this.departmentId = departmentId; }
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public String getSide() { return side; }

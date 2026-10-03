@@ -1,23 +1,22 @@
 package com.aierp.repository;
 
+import com.aierp.domain.integration.WebhookEvent;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import java.time.Instant;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
+import java.util.UUID;
 
 @Repository
-public class WebhookEventRepository {
+public interface WebhookEventRepository extends JpaRepository<WebhookEvent, UUID> {
 
-    // Thread-safe in-memory store for idempotency evaluation during testing/POC execution
-    private final Set<String> processedKeys = ConcurrentHashMap.newKeySet();
+    Optional<WebhookEvent> findBySourceAndEventId(
+            String source,
+            String eventId
+    );
 
-    public boolean existsBySourceAndEventId(String source, String eventId) {
-        return processedKeys.contains(source + ":" + eventId);
-    }
-
-    public void saveRawEvent(String source, String eventId, Map<String, Object> payload, Instant receivedAt) {
-        processedKeys.add(source + ":" + eventId);
-    }
+    boolean existsBySourceAndEventId(
+            String source,
+            String eventId
+    );
 }

@@ -1,4 +1,4 @@
-package com.aierp.ai_native_erp_poc;
+package com.aierp;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

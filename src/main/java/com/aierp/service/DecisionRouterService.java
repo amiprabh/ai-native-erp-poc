@@ -14,31 +14,64 @@ import java.util.Optional;
 public class DecisionRouterService {
 
     private final AccountingPatternRepository patternRepository;
+    private final SemanticPatternMatchingService semanticMatcher;
     private final LlmInferenceService llmService;
 
-    public DecisionRouterService(AccountingPatternRepository patternRepository, LlmInferenceService llmService) {
+    public DecisionRouterService(AccountingPatternRepository patternRepository,
+                                  SemanticPatternMatchingService semanticMatcher,
+                                  LlmInferenceService llmService) {
         this.patternRepository = patternRepository;
+        this.semanticMatcher = semanticMatcher;
         this.llmService = llmService;
     }
 
-    public JournalDistributionProposal resolveAccountingDistribution(String vendorName, String lineDescription, BigDecimal amount) {
-        // Step 1: Check deterministic historical patterns (Bypasses LLM call)
-        Optional<AccountingPattern> matchedPattern = patternRepository.findTopByVendorAndDescriptionFeature(vendorName, lineDescription);
-        
+    public JournalDistributionProposal resolveAccountingDistribution(String transactionId, String vendorName,
+            String lineDescription, BigDecimal amount) {
+
+        // Tier 1: exact historical pattern match -- free, instant, no AI call.
+        Optional<AccountingPattern> matchedPattern =
+                patternRepository.findTopByVendorAndDescriptionFeature(vendorName, lineDescription);
+
         if (matchedPattern.isPresent()) {
             AccountingPattern pattern = matchedPattern.get();
+            LineDistribution debitLine = new LineDistribution(pattern.getGlAccountId(),
+                pattern.getDepartmentId(), amount,
+                "DEBIT");
+            LineDistribution creditLine = new LineDistribution("210000", "CORP", amount, "CREDIT");
+            // Accounts Payable
             return new JournalDistributionProposal(
-                List.of(new LineDistribution(pattern.getGlAccountId(), pattern.getDepartmentId(), amount, "DEBIT")),
+                List.of(debitLine, creditLine),
                 "HISTORICAL_PATTERN",
-                1.00 // Maximum confidence for learned rules
+                1.00
             );
         }
 
-        // Step 2: Fall back to selective LLM reasoning for ambiguous items
-        JournalDistributionProposal aiProposal = llmService.inferGlDistribution(vendorName, lineDescription, amount);
-        
-        // Step 3: Flag low-confidence outputs for human review queue
-        if (aiProposal.confidenceScore() < 0.90) {
+        // Tier 2: semantic similarity match -- catches near-duplicates the
+        // exact lookup missed ("AWS" vs "Amazon Web Services") without
+        // paying for an LLM call.
+        Optional<SemanticPatternMatchingService.MatchedPattern> semanticMatch =
+                semanticMatcher.findSimilarPattern(vendorName, lineDescription);
+
+        if (semanticMatch.isPresent()) {
+            var match = semanticMatch.get();
+            LineDistribution debitLine = new LineDistribution(match.glAccountId(),
+                match.departmentId(), amount,
+                "DEBIT");
+            LineDistribution creditLine = new LineDistribution("210000", "CORP", amount, "CREDIT");
+            // Accounts Payable
+            return new JournalDistributionProposal(
+                List.of(debitLine, creditLine),
+                "SEMANTIC_MATCH",
+                match.similarityScore()
+            );
+        }
+
+        // Tier 3: no precedent at all -- fall back to LLM reasoning, same as
+        // before.
+        JournalDistributionProposal aiProposal =
+                llmService.inferGlDistribution(transactionId, vendorName, lineDescription, amount);
+
+        if (aiProposal.confidenceScore() <= 0.90) {
             aiProposal.setRequiresHumanApproval(true);
         }
 
