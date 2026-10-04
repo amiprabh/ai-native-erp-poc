@@ -141,7 +141,7 @@ On startup `DemoDataSeeder` creates two demo patterns (AWS / "Cloud hosting serv
 ```bash
 ./mvnw clean test
 ```
-The repository currently defines 8 tests. The two `@SpringBootTest` classes need PostgreSQL running and `GEMINI_API_KEY` set, and they share your local development database. Re-run the suite to confirm the current pass count; the tests cover unit and context behavior only, not the end-to-end pipeline.
+The repository currently defines 28 tests. The two `@SpringBootTest` classes need PostgreSQL running and `GEMINI_API_KEY` set, and they share your local development database. Re-run the suite to confirm the current pass count; the tests cover unit and context behavior only, not the end-to-end pipeline.
 
 ### 4. Try the demo
 ```bash
@@ -169,5 +169,5 @@ Highest-impact items first. The full prioritized list is in `DESIGN.md` section 
 - **No reconciliation or backfill.** Missed source events are not detected. (A nightly reconciliation job is a design goal, not an implemented feature.)
 - **Embedding/vector failures are not handled in routing;** they go through Kafka retry and the DLT instead of a fallback.
 - **Single-line payload shape, hardcoded chart of accounts** (duplicated in two classes, debit side only), no currency, period, tax, or multi-line invoice handling.
-- **Limited test coverage:** nothing covers the webhook controller, consumer, semantic service, approval flow, concurrency, or failure injection.
+- **Limited test coverage:** tests don't cover the semantic service, concurrency, or failure injection.
 - Invoice text is sent to an external LLM and embedding provider; do not use real financial data without reviewing that.
