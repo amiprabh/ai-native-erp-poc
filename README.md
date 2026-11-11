@@ -21,7 +21,7 @@ Built with **Java 21** and **Spring Boot 3.3.4** (Spring AI 1.0.9), with a conve
 
 - **`controller/`**: `WebhookIngestionController` (webhook entry point) and `JournalEntryApprovalController` (reviewer API).
 - **`consumer/`**: `InvoiceTransactionConsumer`, the Kafka listener.
-- **`service/`**: `DecisionRouterService` (tier routing), `SemanticPatternMatchingService` (pgvector retrieval), `LlmInferenceService` (Gemini), `AccountingEngine` (validation and posting), `JournalEntryApprovalService` (approve/reject and pattern promotion).
+- **`service/`**: `DecisionRouterService` (tier routing), `SemanticPatternMatchingService` (pgvector retrieval), `LlmInferenceService` (LLM), `AccountingEngine` (validation and posting), `JournalEntryApprovalService` (approve/reject and pattern promotion).
 - **`domain/core/`**: authoritative ledger entities (`JournalEntry`, `LedgerLine`; `Invoice` exists but is not used yet).
 - **`domain/ai/`**: `AccountingPattern`, `AiDecisionLog`.
 - **`domain/integration/`**: `WebhookEvent`.
@@ -46,10 +46,10 @@ Neither the LLM nor a pattern/semantic match writes to the ledger. Every proposa
 |---|---|---|---|---|
 | 1 | Exact vendor + description match | `HISTORICAL_PATTERN` | 1.00 | No |
 | 2 | pgvector cosine similarity, top-1, threshold 0.85 | `SEMANTIC_MATCH` | similarity score | **No (see limitations)** |
-| 3 | LLM (`gemini-3-flash-preview`) with allowlist check | model name | model-reported | Yes if below 0.90 |
+| 3 | LLM (model-agnostic) with allowlist check | model name | model-reported | Yes if below configured 0.93 |
 | Fallback | LLM error or invalid output | `<model>_FALLBACK` | 0.00 | Always (suspense `999999`/`SUSPENSE`) |
 
-The 0.90 and 0.85 thresholds are hand-picked starting values, not calibrated on data.
+The LLM review threshold is configured as 0.93 in `application.yml`; the semantic similarity threshold is 0.85. Both are starting values, not calibrated on data.
 
 ### 3. Feedback loop
 Approving a `PENDING_APPROVAL` entry sets it to `POSTED`, saves a new accounting pattern from its debit line, and indexes it for semantic search, so similar future invoices resolve at Tier 1 or Tier 2.
@@ -63,7 +63,7 @@ These reduce duplicates but do **not** make processing exactly-once (see limitat
 
 ## 🛠️ Technologies
 - **Java 21 / Spring Boot 3.3.4**
-- **Spring AI 1.0.9** (OpenAI-compatible client pointed at Gemini; pgvector vector store)
+- **Spring AI 1.0.9** (OpenAI-compatible client supporting multiple LLM providers via OpenRouter)
 - **Apache Kafka** (event streaming and decoupling)
 - **PostgreSQL 16 + pgvector** (relational storage and embeddings, HNSW index, cosine distance)
 - **Spring Data JPA**
@@ -121,7 +121,7 @@ A non-pending entry returns `409`. An unknown entry currently returns `500` inst
 ## 🚦 Getting Started
 
 ### Prerequisites
-Java 21, Docker, and a Gemini API key. Tests and the application both need `GEMINI_API_KEY` set, and the key must never be committed.
+Java 21, Docker, and an LLM API key. Tests and the application both need `OPENROUTER_API_KEY` set, and the key must never be committed.
 
 ### 1. Launch infrastructure
 ```bash
@@ -132,7 +132,7 @@ Postgres has no persistent volume, so data is lost when the container is removed
 
 ### 2. Run the application
 ```bash
-export GEMINI_API_KEY="your-key-here"   # PowerShell: $env:GEMINI_API_KEY="your-key-here"
+export OPENROUTER_API_KEY="your-key-here"   # PowerShell: $env:OPENROUTER_API_KEY="your-key-here"
 ./mvnw spring-boot:run
 ```
 On startup `DemoDataSeeder` creates two demo patterns (AWS / "Cloud hosting services", Staples / "Office supplies") and indexes them, but only when the pattern table is empty. Indexing calls the embedding API.
@@ -141,7 +141,7 @@ On startup `DemoDataSeeder` creates two demo patterns (AWS / "Cloud hosting serv
 ```bash
 ./mvnw clean test
 ```
-The repository currently defines 28 tests. The two `@SpringBootTest` classes need PostgreSQL running and `GEMINI_API_KEY` set, and they share your local development database. Re-run the suite to confirm the current pass count; the tests cover unit and context behavior only, not the end-to-end pipeline.
+The repository currently defines 8 test suites. The two `@SpringBootTest` classes need PostgreSQL running and `OPENROUTER_API_KEY` set, and they share your local development database. Re-run the suite to confirm the current pass count; the tests cover unit and context behavior only, not the end-to-end pipeline.
 
 ### 4. Try the demo
 ```bash
@@ -156,6 +156,26 @@ docker compose exec postgres psql -U erp_user -d aierp_db
 #       select entry_id, source_invoice_id, status, source from core_finance.journal_entries;
 ```
 
+## 📏 Router evaluation harness
+
+A small hand-labeled benchmark lives at `evals/datasets/ap_coding_v1.jsonl` (60 invoice lines). It is a diagnostic dataset, not a statistically representative production benchmark.
+
+Run the offline dataset and metrics tests without starting the application or calling the LLM:
+
+```bash
+./mvnw test '-Dtest=Eval*Test'
+```
+
+Run the live router evaluation only when PostgreSQL/pgvector and the required `OPENROUTER_API_KEY` are configured. the Spring context may call the embedding API while seeding demo patterns, and each unknown invoice can call the LLM. The live test does not call `AccountingEngine` or post journal entries, but successful LLM inferences are written to `ai_intelligence.ai_decision_logs` with transaction IDs prefixed by `eval-`.
+
+```bash
+./mvnw test -Dtest=RouterEvalTest -Deval=true
+# Optional controls:
+./mvnw test -Dtest=RouterEvalTest -Deval=true -Deval.dataset=evals/datasets/ap_coding_v1.jsonl -Deval.delayMs=1500 -Deval.maxUnsafeRate=0.02
+```
+
+Markdown and JSON reports are generated under `target/eval-reports/` (Git-ignored). The report includes overall accuracy, review rate, auto-post precision, unsafe auto-posts, per-tier/per-tag slices, LLM confidence calibration, and a 0.50–0.99 threshold sweep with Wilson 95% upper bounds. The optional `eval.maxUnsafeRate` gate uses wrong, unreviewed classifications divided by all dataset cases. Treat the result as a regression signal, not a guarantee of financial accuracy. Review the dataset labels and output before sharing a report.
+
 ## ⚠️ Known limitations
 
 Highest-impact items first. The full prioritized list is in `DESIGN.md` section 5.
@@ -169,5 +189,5 @@ Highest-impact items first. The full prioritized list is in `DESIGN.md` section 
 - **No reconciliation or backfill.** Missed source events are not detected. (A nightly reconciliation job is a design goal, not an implemented feature.)
 - **Embedding/vector failures are not handled in routing;** they go through Kafka retry and the DLT instead of a fallback.
 - **Single-line payload shape, hardcoded chart of accounts** (duplicated in two classes, debit side only), no currency, period, tax, or multi-line invoice handling.
-- **Limited test coverage:** tests don't cover the semantic service, concurrency, or failure injection.
+- **Limited test coverage:** nothing covers the webhook controller, consumer, semantic service, approval flow, concurrency, or failure injection.
 - Invoice text is sent to an external LLM and embedding provider; do not use real financial data without reviewing that.

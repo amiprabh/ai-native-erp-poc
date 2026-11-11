@@ -215,7 +215,7 @@ class DecisionRouterServiceTest {
                         "DEBIT"
                     )
                 ),
-                "gemini-3-flash-preview",
+                "LLM",
                 0.72
             );
 
@@ -293,7 +293,7 @@ class DecisionRouterServiceTest {
                         "DEBIT"
                     )
                 ),
-                "gemini-3-flash-preview",
+                "LLM",
                 0.95
             );
 

@@ -118,7 +118,7 @@ first.
 See `demo.sh` — three paths, matching the Golden Rules in `SPEC.txt`:
 
 1. **Known vendor** → historical pattern match → auto-posts at confidence 1.00
-2. **New/ambiguous vendor** → LLM proposes, confidence below 0.90 →
+2. **New/ambiguous vendor** → LLM proposes, confidence below 0.93 →
    `PENDING_APPROVAL`
 3. **Simulated LLM outage** → suspense account, confidence 0.00, forced
    human review

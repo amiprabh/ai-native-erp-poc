@@ -14,18 +14,20 @@ spring:
       ddl-auto: update
     properties:
       hibernate:
-        hbm2ddl.create_namespaces: true
+        hbm2ddl.create_namespaces: true    
 
   ai:
     openai:
-      api-key: ${GEMINI_API_KEY}
-      base-url: https://generativelanguage.googleapis.com/v1beta/openai
+      api-key: ${OPENROUTER_API_KEY}
+      base-url: https://openrouter.ai/api/v1
       chat:
         options:
-          model: gemini-3-flash-preview
+          model: meta-llama/llama-3.3-70b-instruct
       embedding:
+        base-url: https://openrouter.ai/api
+        api-key: ${OPENROUTER_API_KEY}
         options:
-          model: gemini-embedding-001
+          model: openai/text-embedding-3-small
           dimensions: 1536
 
     vectorstore:
@@ -34,6 +36,11 @@ spring:
         distance-type: COSINE_DISTANCE
         dimensions: 1536
         initialize-schema: true
+
+erp:
+  routing:
+    # LLM proposals below this confidence require human approval. Tune only after reviewing eval reports.
+    llm-review-threshold: 0.93
 
   kafka:
     bootstrap-servers: localhost:9092

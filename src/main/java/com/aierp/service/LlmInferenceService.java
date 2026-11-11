@@ -60,7 +60,7 @@ public class LlmInferenceService {
 
         public JournalDistributionProposal inferGlDistribution(String transactionId, String vendorName,
                         String lineDescription, BigDecimal amount) {
-                log.info("Executing Gemini inference for Vendor: '{}', Description: '{}', Amount: {}", vendorName,
+                log.info("Executing LLM inference for Vendor: '{}', Description: '{}', Amount: {}", vendorName,
                                 lineDescription, amount);
 
                 try {
@@ -105,11 +105,11 @@ public class LlmInferenceService {
                 } catch (Exception e) {
                          if (e instanceof NonTransientAiException) {
                                 logDecision(transactionId, modelName + "_AI_QUOTA_EXCEEDED", 0.00, null);
-                                log.error("Gemini AI quota exceeded. Falling back to suspense account.", e);
+                                log.error("LLM AI quota exceeded. Falling back to suspense account.", e);
                          }
                          else {
                                 logDecision(transactionId, modelName + "_FALLBACK", 0.00, null);
-                                log.error("Gemini Inference failed. Falling back to suspense account.", e);
+                                log.error("LLM Inference failed. Falling back to suspense account.", e);
                          }
                         LineDistribution fallbackDebit = new LineDistribution("999999", "SUSPENSE", amount, "DEBIT");
                         LineDistribution fallbackCredit = new LineDistribution("210000", "CORP", amount, "CREDIT");

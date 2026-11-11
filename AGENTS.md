@@ -15,7 +15,7 @@ or commit messages.
 
 ## Setup
 - Requires Postgres (pgvector image) + Kafka: `docker-compose up -d`
-- Requires `GEMINI_API_KEY` env var (Gemini via the OpenAI-compatible endpoint,
+- Requires `OPENROUTER_API_KEY` env var (LLM via the OpenAI-compatible endpoint,
   used for both chat and embeddings). It has no default in `application.yml`;
   never hardcode it in any file, including docs, scripts, and tests.
 - Postgres has no persistent volume; data is lost when the container is removed.
@@ -28,7 +28,7 @@ or commit messages.
 
 Test caveats:
 - `@SpringBootTest` classes load the full context: they need Postgres and
-  `GEMINI_API_KEY`, share the dev database, and `DemoDataSeeder` runs at
+  `OPENROUTER_API_KEY`, share the dev database, and `DemoDataSeeder` runs at
   startup (it calls the embedding API when the pattern table is empty).
 - Do not quote a test pass count in docs without running the suite first.
 - The suite has no coverage for the webhook controller, consumer, semantic

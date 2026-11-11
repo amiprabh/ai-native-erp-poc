@@ -39,7 +39,7 @@ class LlmInferenceServiceTest {
         when(requestSpec.system(anyString())).thenReturn(requestSpec);
         when(requestSpec.user(any(Consumer.class))).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(callSpec);
-        when(callSpec.content()).thenThrow(new RuntimeException("Simulated Gemini outage"));
+        when(callSpec.content()).thenThrow(new RuntimeException("Simulated LLM outage"));
 
         LlmInferenceService service = new LlmInferenceService(builder, decisionLogRepository, objectMapper);
 

@@ -20,7 +20,7 @@
     </properties>
 
     <dependencies>
-        <!-- Spring AI OpenAI Starter (Connects to Gemini via OpenAI compatibility layer) -->
+        <!-- Spring AI OpenAI Starter (OpenAI-compatible client supporting multiple LLM providers) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>

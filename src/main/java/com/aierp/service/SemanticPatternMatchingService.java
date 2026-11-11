@@ -13,9 +13,8 @@ import java.util.Optional;
 @Service
 public class SemanticPatternMatchingService {
 
-    // Below this cosine similarity, we don't trust the match enough to skip
-    // the LLM -- tune this like the 0.90 LLM confidence threshold: a gut-feel
-    // starting point, not derived from measured data yet.
+    // Below this cosine similarity, the router falls through to the LLM.
+    // This is a gut-feel starting point, not derived from measured data yet.
     private static final double SIMILARITY_THRESHOLD = 0.85;
 
     private final VectorStore vectorStore;
@@ -52,7 +51,6 @@ public class SemanticPatternMatchingService {
      */
     public Optional<MatchedPattern> findSimilarPattern(String vendorName, String lineDescription) {
         String query = "Vendor: " + vendorName + ", Description: " + lineDescription;
-
         List<Document> results = vectorStore.similaritySearch(
                 SearchRequest.builder()
                         .query(query)

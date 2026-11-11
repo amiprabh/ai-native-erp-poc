@@ -29,3 +29,7 @@ Thumbs.db
 /out/
 /dist/
 /coverage/
+# Generated live evaluation output
+evals/reports/*
+!evals/reports/README.md
+!evals/reports/.gitkeep

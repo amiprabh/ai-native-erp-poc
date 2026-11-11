@@ -5,6 +5,7 @@ import com.aierp.dto.JournalDistributionProposal;
 import com.aierp.dto.LineDistribution;
 import com.aierp.repository.AccountingPatternRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -16,6 +17,15 @@ public class DecisionRouterService {
     private final AccountingPatternRepository patternRepository;
     private final SemanticPatternMatchingService semanticMatcher;
     private final LlmInferenceService llmService;
+    private double llmReviewThreshold = 0.90;
+
+    @Value("${erp.routing.llm-review-threshold:0.90}")
+    public void setLlmReviewThreshold(double llmReviewThreshold) {
+        if (llmReviewThreshold < 0.0 || llmReviewThreshold > 1.0) {
+            throw new IllegalArgumentException("LLM review threshold must be between 0.0 and 1.0");
+        }
+        this.llmReviewThreshold = llmReviewThreshold;
+    }
 
     public DecisionRouterService(AccountingPatternRepository patternRepository,
                                   SemanticPatternMatchingService semanticMatcher,
@@ -71,7 +81,8 @@ public class DecisionRouterService {
         JournalDistributionProposal aiProposal =
                 llmService.inferGlDistribution(transactionId, vendorName, lineDescription, amount);
 
-        if (aiProposal.confidenceScore() <= 0.90) {
+        // A proposal at the threshold is eligible for auto-posting; below it requires review.
+        if (aiProposal.confidenceScore() < llmReviewThreshold) {
             aiProposal.setRequiresHumanApproval(true);
         }
 

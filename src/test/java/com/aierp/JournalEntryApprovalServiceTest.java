@@ -40,7 +40,7 @@ class JournalEntryApprovalServiceTest {
         entry.setSourceInvoiceId("INV-APPROVE-01");
         entry.setVendorName("Quixotic Ventures LLC");
         entry.setDescriptionFeature("Miscellaneous business services Q3");
-        entry.setSource("gemini-3-flash-preview");
+        entry.setSource("meta-llama/llama-3.3-70b-instruct");
         entry.setStatus("PENDING_APPROVAL");
 
         LedgerLine debit = new LedgerLine();
